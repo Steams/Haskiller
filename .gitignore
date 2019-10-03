@@ -24,4 +24,5 @@ cabal.project.local~
 .HTF/
 .ghc.environment.*
 *.org
+TAGS
 *~
