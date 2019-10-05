@@ -1,49 +1,58 @@
 module Main where
 
-import Control.Monad
-import Data.Functor
-import Data.List.Split
-import Lib
-import System.Directory
-import System.IO
-import Text.Read
+import           Control.Monad
+import           Data.List.Split
+import           Data.Maybe
+import           System.Directory
+import           SysTools.Tasks
+import           Text.Read
 
--- main :: IO ()
--- main = readFile "/proc/1726/cmdline" >>= putStrLn
 data Proc =
   Proc
     { name :: String
-    , pid :: String
+    , pid  :: String
     }
 
 data Model =
   Model
-    { procs :: [Proc]
-    , search :: String -- Maybe String ?
+    { procs    :: [Proc]
+    , search   :: String -- Maybe String ?
     , position :: Int
     }
 
--- show_procs :: [String] -> String -> Int -> IO ()
--- show_procs procs search pos =
--- show_procs :: [String] -> IO ()
--- show_procs procs = map put(take 5 procs)
-showProc x = putStrLn $ (pid x) ++ " :: " ++ (name x)
+header = "Filter Processes : \n"
+instructions = "\nup/down arrow keys to move, type to filter, enter to select"
 
+render :: [Proc] -> IO ()
+render ps = putStrLn $ header <> unlines (showProc <$> ps) <> instructions
+
+filter_procs :: String -> [Proc] -> [Proc]
+filter_procs search = filter (isContainedIn search . name)
+
+showProc :: Proc -> String
+showProc x =  pid x ++ " :: " ++ name x
+
+path :: String -> FilePath
 path pid = "/proc/" ++ pid ++ "/cmdline"
 
+getProcName :: String -> String
+getProcName = head . splitOn " "
+
 getProcs :: IO [Proc]
-getProcs =
-  getDirectoryContents "/proc/" >>=
-  filterM (\x ->
-                 case readMaybe x :: Maybe Integer of
-                   Just _ -> return True
-                   Nothing -> return False)
-  >>= filterM (\x -> doesFileExist (path x) )
-  >>= mapM (\pid ->
-              readFile (path pid) >>= (\name -> return (Proc (head . splitOn " " $ name) pid)))
-  >>= filterM (\x -> return (name x /= ""))
+getProcs = do
+  dirs <- getDirectoryContents "/proc/"
+  valid_dirs <- filterM (doesFileExist . path ) . map show . catMaybes $ (readMaybe <$> dirs :: [Maybe Integer])
+  found_procs <- mapM (\pid -> do
+                          contents <- readFile . path $ pid
+                          return Proc {name = getProcName contents, pid = pid}
+                      ) valid_dirs
+  -- found_procs <- mapM ((>>= (\x -> return Proc {name = getProcName x, pid = ""})) . readFile . path)  valid_dirs
+  return $ filter hasName found_procs
+  where
+    hasName x = name x /= ""
 
 main :: IO ()
-main =
-  take 5 <$> getProcs
-  >>= mapM_ showProc
+main = do
+  ps <- getProcs
+  render $ filter_procs "emacs" ps
+  -- listen

@@ -25,4 +25,5 @@ cabal.project.local~
 .ghc.environment.*
 *.org
 TAGS
+.hlint.yaml
 *~
