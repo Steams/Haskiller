@@ -2,7 +2,7 @@
 module Main where
 
 import           Control.Monad
-import           Data.List.Split
+import           Data.List.Extra
 import           Data.Maybe
 import           System.Console.ANSI
 import           System.Directory
@@ -24,11 +24,12 @@ data Model =
     }
 
 data ArrowInput = Up | Down
-data Input = Exit | Nav ArrowInput
+data TextInput = SearchInput Char | Backspace
+data Input = Exit | Nav ArrowInput | Search TextInput
 
 maxShown = 10
 
-header pos shownPs allPs = "Filter Processes : #" ++ show pos ++ "::" ++ "(" ++ show shownPs ++ "/" ++ show allPs ++ ")\n"
+header pos shownPs allPs search = "Filter Processes : #" ++ show pos ++  " (" ++ show shownPs ++ "/" ++ show allPs ++ ") : " ++ search ++ "\n"
 instructions = "\nup/down arrow keys to move, type to filter, enter to select"
 
 
@@ -60,11 +61,14 @@ getProcs = do
 parseInput :: IO Input
 parseInput =
   getChar >>= \case
+    '\DEL' -> return $ Search Backspace
     '\ESC' -> parseInput
     '[' -> parseInput
+    -- may need to add flag to parseInput so that A and B count as regular letters when not parsting \ESC
     'A' -> return $ Nav Up
     'B' -> return $ Nav Down
-    _ -> return Exit
+    c   -> return $ Search $ SearchInput c
+    -- _ -> return Exit
 
 updatePos :: ArrowInput -> Int -> Int -> Int
 updatePos dir current size =
@@ -78,59 +82,77 @@ updateSlot dir current size =
     Up   -> if current == 1 then current else current - 1
     Down -> if current == min maxShown size then current else current + 1
 
-updateModel :: Model -> Int -> Int -> Model
-updateModel model pos slot = Model (procs model) (search model) pos slot
+updateModelPos :: Model -> Int -> Int -> Model
+updateModelPos model = Model (procs model) (search model)
+
+updateModelSearch:: Model -> TextInput -> Model
+updateModelSearch model x =
+  case x of
+    SearchInput c -> Model (procs model) (snoc (search model) c) 1 1
+    Backspace -> Model (procs model) (reverse . drop 1 . reverse $ search model) 1 1
 
 render :: Model -> IO ()
 render model =
-  let filtered = filter_procs model
+  let
+    filtered = filter_procs model
+    pos      = position model
 
-      pos = (position model)
+    scroll =
+      case slot model of
+        1        -> drop (pos - 1)
+        maxShown -> drop (pos - maxShown)
+        _        -> drop (pos - slot model)
 
-      scroll =
-        case (slot model) of
-          1        -> drop (pos - 1)
-          maxShown -> drop (pos - maxShown)
-          _        -> drop (pos - (slot model))
+    displayed_procs = take maxShown . scroll $ filtered
 
-      displayed_procs = take maxShown . scroll $ filtered
+    before_selected = take (slot model - 1) displayed_procs
+    selected        = take 1 . drop (slot model - 1) $ displayed_procs
+    after_selected  = take (maxShown - slot model) . drop (slot model) $ displayed_procs
 
-      before_selected = take (slot model - 1) $ displayed_procs
-      selected        = take 1 . drop (slot model - 1) $ displayed_procs
-      after_selected  = take (maxShown - (slot model)) . drop (slot model) $ displayed_procs
+    formatted_procs =
+      concat
+        [ showProc <$> before_selected
+        , ["> " ++ showProc (head selected)]
+        , showProc <$> after_selected
+        ]
 
-      formatted_procs =
-        concat $
-        (showProc <$> before_selected) :
-        ["> " ++ (showProc $ head selected)] :
-        (showProc <$> after_selected) : []
+    all_count       = length (procs model)
+    filtered_count  = length filtered
 
-      all_count      = length (procs model)
-      filtered_count = length filtered
+    heading = header pos filtered_count all_count (search model)
 
-   in do clearScreen
-         putStrLn $
-           header pos filtered_count all_count <> unlines formatted_procs <> instructions
+   in do
+    clearScreen
+    putStrLn $ heading <> unlines formatted_procs <> instructions
 
 listen :: Model -> IO ()
 listen model =
   parseInput >>= \case
     Nav dir ->
-      let size = length $ filter_procs model
-          currentPos = position model
-          currentSlot = slot model
-          newModel =
-            updateModel
-              model
-              (updatePos dir currentPos size)
-              (updateSlot dir currentSlot size)
-       in render newModel >> listen newModel
+      let
+        size        = length $ filter_procs model
+        currentPos  = position model
+        currentSlot = slot model
+        new_pos     = updatePos dir currentPos size
+        new_slot    = updateSlot dir currentSlot size
+        newModel    = updateModelPos model new_pos new_slot
+       in
+        render newModel >> listen newModel
+    Search (SearchInput c) ->
+      let
+        newModel    = updateModelSearch model $ SearchInput c
+       in
+        render newModel >> listen newModel
+    Search Backspace ->
+      let
+        newModel    = updateModelSearch model Backspace
+       in
+        render newModel >> listen newModel
     Exit -> return ()
 
 main :: IO ()
 main = do
   ps <- getProcs
-  putStrLn $ show . length $ ps
   render $ model ps
   listen $ model ps
   where
