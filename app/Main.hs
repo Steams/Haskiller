@@ -26,14 +26,14 @@ data Model =
 data ArrowInput = Up | Down
 data Input = Exit | Nav ArrowInput
 
-maxShown = 5
+maxShown = 10
 
-header = "Filter Processes : \n"
+header pos shownPs allPs = "Filter Processes : #" ++ show pos ++ "::" ++ "(" ++ show shownPs ++ "/" ++ show allPs ++ ")\n"
 instructions = "\nup/down arrow keys to move, type to filter, enter to select"
 
 
-filter_procs :: String -> [Proc] -> [Proc]
-filter_procs search = filter (isContainedIn search . name)
+filter_procs :: Model -> [Proc]
+filter_procs model = filter (isContainedIn (search model) . name) (procs model)
 
 showProc :: Proc -> String
 showProc x =  pid x ++ " :: " ++ name x
@@ -67,32 +67,56 @@ parseInput =
     _ -> return Exit
 
 updatePos :: ArrowInput -> Int -> Int -> Int
-updatePos dir current length =
+updatePos dir current size =
   case dir of
     Up   -> if current == 1 then current else current - 1
-    Down -> if current == length then current else current + 1
+    Down -> if current == size then current else current + 1
 
 updateSlot :: ArrowInput -> Int -> Int -> Int
-updateSlot dir current length =
+updateSlot dir current size =
   case dir of
     Up   -> if current == 1 then current else current - 1
-    Down -> if current == min maxShown length then current else current + 1
+    Down -> if current == min maxShown size then current else current + 1
 
 updateModel :: Model -> Int -> Int -> Model
 updateModel model pos slot = Model (procs model) (search model) pos slot
 
 render :: Model -> IO ()
-render model = do
-  clearScreen
-  putStrLn $ header <> unlines (showProc <$> ps) <> instructions
-  where
-    ps = take 10 . drop (position model - 1) $ (procs model)
+render model =
+  let filtered = filter_procs model
+
+      pos = (position model)
+
+      scroll =
+        case (slot model) of
+          1        -> drop (pos - 1)
+          maxShown -> drop (pos - maxShown)
+          _        -> drop (pos - (slot model))
+
+      displayed_procs = take maxShown . scroll $ filtered
+
+      before_selected = take (slot model - 1) $ displayed_procs
+      selected        = take 1 . drop (slot model - 1) $ displayed_procs
+      after_selected  = take (maxShown - (slot model)) . drop (slot model) $ displayed_procs
+
+      formatted_procs =
+        concat $
+        (showProc <$> before_selected) :
+        ["> " ++ (showProc $ head selected)] :
+        (showProc <$> after_selected) : []
+
+      all_count      = length (procs model)
+      filtered_count = length filtered
+
+   in do clearScreen
+         putStrLn $
+           header pos filtered_count all_count <> unlines formatted_procs <> instructions
 
 listen :: Model -> IO ()
 listen model =
   parseInput >>= \case
     Nav dir ->
-      let size = length $ procs model
+      let size = length $ filter_procs model
           currentPos = position model
           currentSlot = slot model
           newModel =
