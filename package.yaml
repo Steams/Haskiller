@@ -26,6 +26,7 @@ dependencies:
 - ansi-terminal >= 0.5
 - extra 
 - ghc
+- process
 
 library:
   source-dirs: src

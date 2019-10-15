@@ -5,7 +5,9 @@ import           Control.Monad
 import           Data.List.Extra
 import           Data.Maybe
 import           System.Console.ANSI
+import           System.Console.ANSI
 import           System.Directory
+import           System.Process
 import           SysTools.Tasks
 import           Text.Read
 
@@ -25,12 +27,12 @@ data Model =
 
 data ArrowInput = Up | Down
 data TextInput = SearchInput Char | Backspace
-data Input = Exit | Nav ArrowInput | Search TextInput
+data Input = Exit | Nav ArrowInput | Search TextInput | Select
 
 safe_head :: [a] -> Maybe a
 safe_head = \case
+  [] -> Nothing
   x:xs -> Just x
-  _ -> Nothing
 
 maxShown = 10
 
@@ -49,7 +51,7 @@ path pid = "/proc/" ++ pid ++ "/cmdline"
 
 getProcName :: String -> String
 getProcName p = case (safe_head . splitOn " " $ p) of
-  Just x -> x
+  Just x  -> x
   Nothing -> ""
 
 getProcs :: IO [Proc]
@@ -69,6 +71,7 @@ parseInput :: IO Input
 parseInput =
   getChar >>= \case
     '\DEL' -> return $ Search Backspace
+    '\n' -> return $ Select
     '\ESC' -> parseInput
     '[' -> parseInput
     -- may need to add flag to parseInput so that A and B count as regular letters when not parsting \ESC
@@ -98,6 +101,24 @@ updateModelSearch model x =
     SearchInput c -> Model (procs model) (snoc (search model) c) 1 1
     Backspace -> Model (procs model) (reverse . drop 1 . reverse $ search model) 1 1
 
+selected_proc model =
+  let
+    filtered = filter_procs model
+    pos      = position model
+
+    scroll =
+      case slot model of
+        1        -> drop (pos - 1)
+        maxShown -> drop (pos - maxShown)
+        _        -> drop (pos - slot model)
+
+    displayed_procs    = take maxShown . scroll $ filtered
+    selected           = take 1 . drop (slot model - 1) $ displayed_procs
+  in
+    case selected of
+      [] -> Nothing
+      xs -> Just $ head xs
+
 render :: Model -> IO ()
 render model =
   let
@@ -110,19 +131,17 @@ render model =
         maxShown -> drop (pos - maxShown)
         _        -> drop (pos - slot model)
 
-    displayed_procs = take maxShown . scroll $ filtered
+    displayed_procs    = take maxShown . scroll $ filtered
 
-    before_selected = take (slot model - 1) displayed_procs
-    selected        = take 1 . drop (slot model - 1) $ displayed_procs
-    after_selected  = take (maxShown - slot model) . drop (slot model) $ displayed_procs
+    before_selected    = take (slot model - 1) displayed_procs
+    selected           = take 1 . drop (slot model - 1) $ displayed_procs
+    after_selected     = take (maxShown - slot model) . drop (slot model) $ displayed_procs
 
-    formatted_procs =
-      case (safe_head selected) of
-        Just x -> concat [ showProc <$> before_selected
-                         , ["> " ++ showProc  (head selected)]
-                         , showProc <$> after_selected
-                         ]
-        Nothing -> [""]
+    before_formatted   = unlines $ showProc <$> before_selected
+    after_formatted    = unlines $ showProc <$> after_selected
+    selected_formatted = case (safe_head selected) of
+        Just x  -> "> " ++ showProc  (head selected)
+        Nothing -> ""
 
     all_count       = length (procs model)
     filtered_count  = length filtered
@@ -131,7 +150,20 @@ render model =
 
    in do
     clearScreen
-    putStrLn $ heading <> unlines formatted_procs <> instructions
+    setCursorPosition 0 0
+    putStrLn  heading
+    putStrLn  before_formatted
+    setSGR [SetColor Foreground Dull Blue]
+    putStrLn  selected_formatted
+    setSGR [Reset]
+    putStrLn  after_formatted
+    putStrLn  instructions
+
+printPS ps = do
+  putStrLn $ showProc ps
+  getChar
+
+kill_ps pid = runCommand $ "kill " ++ pid
 
 listen :: Model -> IO ()
 listen model =
@@ -145,23 +177,30 @@ listen model =
         new_slot    = updateSlot dir currentSlot size
         newModel    = updateModelPos model new_pos new_slot
        in
-        render newModel >> listen newModel
+        redraw newModel
     Search (SearchInput c) ->
       let
         newModel    = updateModelSearch model $ SearchInput c
        in
-        render newModel >> listen newModel
+        redraw newModel
     Search Backspace ->
       let
         newModel    = updateModelSearch model Backspace
        in
-        render newModel >> listen newModel
+        redraw newModel
+    Select ->
+      case selected_proc model of
+        Just x  -> kill_ps (pid x)  >> refresh (model {search = ""})
+        Nothing -> refresh (model {search = ""})
     Exit -> return ()
 
-main :: IO ()
-main = do
+redraw model = do
+  render $ model
+  listen $ model
+
+refresh model = do
   ps <- getProcs
-  render $ model ps
-  listen $ model ps
-  where
-    model x = Model x "" 1 1
+  redraw $ model {procs = ps}
+
+main :: IO ()
+main = refresh $ Model [] "" 1 1
