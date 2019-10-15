@@ -27,6 +27,11 @@ data ArrowInput = Up | Down
 data TextInput = SearchInput Char | Backspace
 data Input = Exit | Nav ArrowInput | Search TextInput
 
+safe_head :: [a] -> Maybe a
+safe_head = \case
+  x:xs -> Just x
+  _ -> Nothing
+
 maxShown = 10
 
 header pos shownPs allPs search = "Filter Processes : #" ++ show pos ++  " (" ++ show shownPs ++ "/" ++ show allPs ++ ") : " ++ search ++ "\n"
@@ -43,7 +48,9 @@ path :: String -> FilePath
 path pid = "/proc/" ++ pid ++ "/cmdline"
 
 getProcName :: String -> String
-getProcName = head . splitOn " "
+getProcName p = case (safe_head . splitOn " " $ p) of
+  Just x -> x
+  Nothing -> ""
 
 getProcs :: IO [Proc]
 getProcs = do
@@ -110,11 +117,12 @@ render model =
     after_selected  = take (maxShown - slot model) . drop (slot model) $ displayed_procs
 
     formatted_procs =
-      concat
-        [ showProc <$> before_selected
-        , ["> " ++ showProc (head selected)]
-        , showProc <$> after_selected
-        ]
+      case (safe_head selected) of
+        Just x -> concat [ showProc <$> before_selected
+                         , ["> " ++ showProc  (head selected)]
+                         , showProc <$> after_selected
+                         ]
+        Nothing -> [""]
 
     all_count       = length (procs model)
     filtered_count  = length filtered
